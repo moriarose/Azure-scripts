@@ -1,0 +1,86 @@
+Install-Module -Name ExchangeOnlineManagement
+Connect-ExchangeOnline -UserPrincipalName adminuser@exmple.com
+
+Then run:
+
+
+# Define the output file path
+$outputFile = "C:\Temp\DistributionGroupsAndMembers.csv"
+
+# Ensure the output directory exists
+$outputDir = Split-Path -Path $outputFile
+if (-not (Test-Path -Path $outputDir)) {
+    New-Item -ItemType Directory -Path $outputDir -Force | Out-Null
+}
+
+# Initialize an array to store results
+$results = @()
+
+# Get all distribution groups
+try {
+    $distributionGroups = Get-DistributionGroup
+} catch {
+    Write-Error "Failed to retrieve distribution groups. Error: $_"
+    exit
+}
+
+# Check if any groups were retrieved
+if ($distributionGroups) {
+    # Loop through each distribution group
+    foreach ($group in $distributionGroups) {
+        if ($group.Identity) {
+            try {
+                # Get owner(s) of the distribution group
+                $owners = Get-DistributionGroup | Where-Object { $_.Name -eq $group.Name } | Select-Object -ExpandProperty ManagedBy
+
+                # Retrieve the owner(s) as a comma-separated string
+                $ownerString = if ($owners) { $owners -join ", " } else { "No Owner" }
+
+                # Get members of the distribution group
+                $members = try {
+                    Get-DistributionGroupMember -Identity $group.Identity
+                } catch {
+                    Write-Warning "Could not retrieve members for group: $($group.Name). Error: $_"
+                    $null
+                }
+
+                if ($members -and $members.Count -gt 0) {
+                    foreach ($member in $members) {
+                        $results += [PSCustomObject]@{
+                            GroupName   = $group.Name
+                            GroupEmail  = $group.PrimarySmtpAddress
+                            Owner       = $ownerString
+                            MemberName  = $member.Name
+                            MemberEmail = $member.PrimarySmtpAddress
+                        }
+                    }
+                } else {
+                    # Handle groups with 0 members
+                    $results += [PSCustomObject]@{
+                        GroupName   = $group.Name
+                        GroupEmail  = $group.PrimarySmtpAddress
+                        Owner       = $ownerString
+                        MemberName  = ""
+                        MemberEmail = ""
+                    }
+                }
+            } catch {
+                Write-Warning "Could not process group: $($group.Name). Error: $_"
+            }
+        }
+    }
+
+    # Export results to a CSV file
+    if ($results.Count -gt 0) {
+        try {
+            $results | Export-Csv -Path $outputFile -NoTypeInformation -Encoding UTF8
+            Write-Output "Results exported to $outputFile"
+        } catch {
+            Write-Error "Failed to export results to CSV. Error: $_"
+        }
+    } else {
+        Write-Warning "No results to export."
+    }
+} else {
+    Write-Warning "No distribution groups found."
+}
